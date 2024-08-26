@@ -26,3 +26,5 @@ node_modules/
 
 # images folder
 images/
+
+.env
