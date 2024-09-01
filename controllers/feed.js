@@ -4,6 +4,8 @@ const  { validationResult } = require('express-validator');
 
 const Post = require('../models/post');
 
+const User = require('../models/user');
+
 exports.getPosts = (req, res, next) => {
     const currentPage = req.query.page || 1;
     const perPage = 2;
@@ -14,7 +16,8 @@ exports.getPosts = (req, res, next) => {
         totalItems = count;
         return Post.find()
           .skip((currentPage - 1) * perPage)
-          .limit(perPage);
+          .limit(perPage)
+          .sort({ createdAt: -1 });
       })
       .then(posts => {
         res
@@ -49,24 +52,35 @@ exports.createPost = (req, res, next) => {
     const imageUrl = req.file.path;
     const title = req.body.title;
     const content = req.body.content;
+    let creator;
 
     // Create post in db
     const post = new Post({
         title: title,
         content: content,
         imageUrl: imageUrl,
-        creator: {
-            name: 'ToRo'
-        },
+        creator: req.userId,
     });
 
     post
     .save()
     .then(result => {
+        return User.findById(req.userId);
+    })
+    .then(user => {
+        creator = user;
+        user.posts.push(post);
+        return user.save();
+    })
+    .then(result => {
         // Response to client
         res.status(201).json({
             message: 'Post created successfully!',
-            post: result
+            post: post,
+            creator: {
+                _id: creator._id,
+                name: creator.name
+            }
         });
     })
     .catch(err => {
@@ -131,6 +145,13 @@ exports.updatePost = (req, res, next) => {
             throw error;
         }
 
+        // Check if user is the creator of the post
+        if (post.creator.toString() !== req.userId) {
+            const error = new Error('Not authorized.');
+            error.statusCode = 404;
+            throw error;
+        }
+
         // Clear old image is new image is uploaded
         if (imageUrl !== post.imageUrl) {
             clearImage(post.imageUrl);
@@ -165,12 +186,25 @@ exports.deletePost = (req, res, next) => {
             error.statusCode = 404;
             throw error;
         }
+        // Check if user is the creator of the post
+        if (post.creator.toString() !== req.userId) {
+            const error = new Error('Not authorized.');
+            error.statusCode = 404;
+            throw error;
+        }
         // clear image
         clearImage(post.imageUrl);
         return Post.findByIdAndDelete(postId);
     })
     .then(result => {
-        // console.log(result);
+        return User.findById(req.userId);
+    })
+    .then(user => {
+        // remove post id from user's posts
+        user.posts.pull(postId);
+        return user.save();
+    })
+    .then(result => {
         res.status(200).json({
             message: 'Deleted post.'
         });
